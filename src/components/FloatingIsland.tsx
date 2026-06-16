@@ -22,16 +22,18 @@ export const FloatingIsland: React.FC = () => {
       repairCell(x, y);
       return;
     }
-    if (cell.type === 'wire' && selectedTool === 'wire') {
-      if (selectedWire && selectedWire.x === x && selectedWire.y === y) {
-        deselectWire();
-      } else {
-        selectWire(x, y);
+    if (cell.type === 'wire') {
+      if (selectedTool === 'remove') {
+        placeOrRemove(x, y);
+        return;
       }
-      return;
-    }
-    if (cell.type === 'wire' && selectedTool === 'remove') {
-      placeOrRemove(x, y);
+      if (selectedWire && selectedWire.x === x && selectedWire.y === y) {
+        if (selectedTool === 'wire') {
+          deselectWire();
+        }
+        return;
+      }
+      selectWire(x, y);
       return;
     }
     placeOrRemove(x, y);
