@@ -2,13 +2,22 @@ import { FloatingIsland } from '@/components/FloatingIsland';
 import { Toolbar } from '@/components/Toolbar';
 import { StatusBar } from '@/components/StatusBar';
 import { SettlementModal } from '@/components/SettlementModal';
+import { WireDetailPanel } from '@/components/WireDetailPanel';
 import { useGameLoop } from '@/hooks/useGameLoop';
 import { useGameStore } from '@/store/useGameStore';
+import { WIRE_PERSONALITY_INFO } from '@/utils/constants';
 
 export default function Home() {
   useGameLoop();
   const dayTime = useGameStore((state) => state.dayTime);
+  const selectedWire = useGameStore((state) => state.selectedWire);
+  const grid = useGameStore((state) => state.grid);
+  const deselectWire = useGameStore((state) => state.deselectWire);
   const isNight = dayTime >= 50;
+
+  const selectedWireData = selectedWire
+    ? grid[selectedWire.y][selectedWire.x].wireData
+    : null;
 
   return (
     <div
@@ -36,7 +45,7 @@ export default function Home() {
             🏝️ 浮岛电网建造
           </h1>
           <p className={`text-sm ${isNight ? 'text-slate-300' : 'text-gray-600'}`}>
-            放置风车和建筑，铺设电线，为你的浮岛带来光明！
+            放置风车和建筑，铺设电线，养成你的专属性格电网！
           </p>
         </header>
 
@@ -58,10 +67,19 @@ export default function Home() {
 
         <footer className="text-center pb-4">
           <p className={`text-xs ${isNight ? 'text-slate-400' : 'text-gray-500'}`}>
-            用你的智慧构建一个完美的电力网络 ⚡
+            用你的智慧构建一个完美的电力网络 ⚡ 点击电线查看性格养成！
           </p>
         </footer>
       </div>
+
+      {selectedWire && selectedWireData && (
+        <WireDetailPanel
+          x={selectedWire.x}
+          y={selectedWire.y}
+          wireData={selectedWireData}
+          onClose={deselectWire}
+        />
+      )}
 
       <SettlementModal />
     </div>
@@ -151,9 +169,37 @@ function GameGuide({ isNight }: { isNight: boolean }) {
           <b>电线</b>连接建筑，可旋转
         </li>
       </ul>
-      <div className="mt-4 pt-3 border-t border-gray-300/30">
-        <p className={`text-xs ${isNight ? 'text-slate-400' : 'text-gray-500'}`}>
-          💡 保持80%以上建筑供电可获得最高满意度！
+
+      <div className={`mt-4 pt-3 border-t ${isNight ? 'border-slate-600' : 'border-gray-200'}`}>
+        <h4 className="text-xs font-bold mb-2 flex items-center gap-1.5">
+          🌟 电线性格系统
+        </h4>
+        <ul className="text-[11px] space-y-1.5">
+          {(['premium', 'aggressive', 'lazy', 'normal'] as const).map((key) => {
+            const info = WIRE_PERSONALITY_INFO[key];
+            return (
+              <li key={key} className="flex items-start gap-1.5">
+                <span>{info.emoji}</span>
+                <div>
+                  <span className="font-semibold" style={{ color: info.color }}>
+                    {info.name}
+                  </span>
+                  <p className={`mt-0.5 opacity-80 ${isNight ? 'text-slate-300' : 'text-gray-500'}`}>
+                    {info.description}
+                  </p>
+                </div>
+              </li>
+            );
+          })}
+        </ul>
+      </div>
+
+      <div className={`mt-4 pt-3 border-t ${isNight ? 'border-slate-600' : 'border-gray-200'}`}>
+        <p className={`text-[11px] ${isNight ? 'text-slate-400' : 'text-gray-500'}`}>
+          💡 <b>操作提示</b>：选中电线工具后点击电线查看详情，ESC关闭面板
+        </p>
+        <p className={`text-[11px] mt-1.5 ${isNight ? 'text-slate-400' : 'text-gray-500'}`}>
+          🎯 <b>养成目标</b>：保持均衡负载，把主干线养成✨优质线路！
         </p>
       </div>
     </div>

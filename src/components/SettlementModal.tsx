@@ -1,8 +1,8 @@
 import React from 'react';
 import { useGameStore } from '../store/useGameStore';
-import { GRID_SIZE, BUILDING_STATS } from '../utils/constants';
+import { GRID_SIZE } from '../utils/constants';
 import { countPoweredBuildings } from '../utils/powerCalculator';
-import { X, Smile, Meh, Frown, Zap, Battery, Home, Factory, Wind } from 'lucide-react';
+import { X, Smile, Zap, Battery, Home, Factory, Wind } from 'lucide-react';
 
 export const SettlementModal: React.FC = () => {
   const {
@@ -51,12 +51,6 @@ export const SettlementModal: React.FC = () => {
   };
 
   const gradeInfo = getGrade();
-
-  const getSatisfactionIcon = () => {
-    if (satisfaction >= 70) return <Smile className="w-8 h-8 text-green-500" />;
-    if (satisfaction >= 40) return <Meh className="w-8 h-8 text-yellow-500" />;
-    return <Frown className="w-8 h-8 text-red-500" />;
-  };
 
   return (
     <div

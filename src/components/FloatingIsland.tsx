@@ -4,15 +4,37 @@ import { GridCellComponent } from './GridCell';
 import { GRID_SIZE } from '../utils/constants';
 
 export const FloatingIsland: React.FC = () => {
-  const { grid, selectedTool, placeOrRemove, rotateCell, repairCell, dayTime } = useGameStore();
+  const {
+    grid,
+    selectedTool,
+    selectedWire,
+    placeOrRemove,
+    rotateCell,
+    repairCell,
+    selectWire,
+    deselectWire,
+    dayTime,
+  } = useGameStore();
 
   const handleCellClick = (x: number, y: number) => {
     const cell = grid[y][x];
     if (cell.faulty) {
       repairCell(x, y);
-    } else {
-      placeOrRemove(x, y);
+      return;
     }
+    if (cell.type === 'wire' && selectedTool === 'wire') {
+      if (selectedWire && selectedWire.x === x && selectedWire.y === y) {
+        deselectWire();
+      } else {
+        selectWire(x, y);
+      }
+      return;
+    }
+    if (cell.type === 'wire' && selectedTool === 'remove') {
+      placeOrRemove(x, y);
+      return;
+    }
+    placeOrRemove(x, y);
   };
 
   const handleCellRightClick = (e: React.MouseEvent, x: number, y: number) => {
@@ -36,10 +58,13 @@ export const FloatingIsland: React.FC = () => {
           }
         }
       }
+      if (e.key === 'Escape') {
+        deselectWire();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [grid, rotateCell]);
+  }, [grid, rotateCell, deselectWire]);
 
   const isNight = dayTime >= 50;
 
@@ -95,6 +120,7 @@ export const FloatingIsland: React.FC = () => {
                 <GridCellComponent
                   cell={cell}
                   selectedTool={selectedTool}
+                  isSelected={selectedWire?.x === x && selectedWire?.y === y}
                   onClick={() => handleCellClick(x, y)}
                   onRightClick={(e) => handleCellRightClick(e, x, y)}
                 />

@@ -5,10 +5,10 @@ import {
   GRID_SIZE,
   DAY_LENGTH,
   FAULT_CHANCE,
-  BUILDING_STATS,
   DAY_THRESHOLD,
 } from '../utils/constants';
 import { calculatePowerNetwork, countPoweredBuildings } from '../utils/powerCalculator';
+import { createInitialWireData, evolveWire, getFaultChance } from '../utils/wirePersonality';
 
 const STORAGE_KEY = 'floating-island-grid-game-save';
 
@@ -30,6 +30,7 @@ interface GameState {
   totalGeneration: number;
   totalConsumption: number;
   showSettlement: boolean;
+  selectedWire: { x: number; y: number } | null;
   setSelectedTool: (tool: ToolType) => void;
   placeOrRemove: (x: number, y: number) => void;
   rotateCell: (x: number, y: number) => void;
@@ -38,6 +39,8 @@ interface GameState {
   resetGame: () => void;
   openSettlement: () => void;
   closeSettlement: () => void;
+  selectWire: (x: number, y: number) => void;
+  deselectWire: () => void;
 }
 
 function createEmptyGrid(): GridCell[][] {
@@ -79,6 +82,14 @@ function loadFromLocalStorage(): PersistedState | null {
     if (!raw) return null;
     const data = JSON.parse(raw);
     if (data && data.grid && Array.isArray(data.grid)) {
+      for (let y = 0; y < data.grid.length; y++) {
+        for (let x = 0; x < data.grid[y].length; x++) {
+          const cell = data.grid[y][x];
+          if (cell.type === 'wire' && !cell.wireData) {
+            cell.wireData = createInitialWireData();
+          }
+        }
+      }
       return {
         grid: data.grid,
         dayTime: data.dayTime ?? 20,
@@ -92,18 +103,29 @@ function loadFromLocalStorage(): PersistedState | null {
   return null;
 }
 
+let tickCounter = 0;
+
 function recalcGrid(grid: GridCell[][], dayTime: number, storedPower: number) {
-  const { poweredCells, totalGeneration, totalConsumption, batteryCapacity } =
+  const { poweredCells, totalGeneration, totalConsumption, batteryCapacity, wireLoads } =
     calculatePowerNetwork(grid, dayTime, storedPower);
 
   const newGrid = grid.map((row) => row.map((c) => ({ ...c })));
   for (let yy = 0; yy < GRID_SIZE; yy++) {
     for (let xx = 0; xx < GRID_SIZE; xx++) {
       newGrid[yy][xx].powered = poweredCells.has(`${xx},${yy}`);
+      if (newGrid[yy][xx].type === 'wire') {
+        const load = wireLoads.get(`${xx},${yy}`) ?? 0;
+        if (newGrid[yy][xx].wireData) {
+          newGrid[yy][xx].wireData = {
+            ...newGrid[yy][xx].wireData!,
+            currentLoad: load,
+          };
+        }
+      }
     }
   }
 
-  return { newGrid, poweredCells, totalGeneration, totalConsumption, batteryCapacity };
+  return { newGrid, poweredCells, totalGeneration, totalConsumption, batteryCapacity, wireLoads };
 }
 
 function initGame(): Omit<GameState, keyof GameStateActions> {
@@ -127,6 +149,7 @@ function initGame(): Omit<GameState, keyof GameStateActions> {
     totalGeneration,
     totalConsumption,
     showSettlement: false,
+    selectedWire: null,
   };
 }
 
@@ -140,12 +163,24 @@ type GameStateActions = Pick<
   | 'resetGame'
   | 'openSettlement'
   | 'closeSettlement'
+  | 'selectWire'
+  | 'deselectWire'
 >;
 
 export const useGameStore = create<GameState>((set, get) => ({
   ...initGame(),
 
-  setSelectedTool: (tool) => set({ selectedTool: tool }),
+  setSelectedTool: (tool) => set({ selectedTool: tool, selectedWire: null }),
+
+  selectWire: (x, y) => {
+    const state = get();
+    const cell = state.grid[y][x];
+    if (cell.type === 'wire') {
+      set({ selectedWire: { x, y } });
+    }
+  },
+
+  deselectWire: () => set({ selectedWire: null }),
 
   placeOrRemove: (x, y) => {
     const state = get();
@@ -161,6 +196,7 @@ export const useGameStore = create<GameState>((set, get) => ({
           rotation: 0,
           powered: false,
           faulty: false,
+          wireData: undefined,
         };
       }
     } else {
@@ -170,6 +206,7 @@ export const useGameStore = create<GameState>((set, get) => ({
         rotation: tool === 'wire' ? cell.rotation % 6 : 0,
         powered: false,
         faulty: false,
+        wireData: tool === 'wire' ? (cell.wireData ?? createInitialWireData()) : undefined,
       };
     }
 
@@ -181,6 +218,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       totalGeneration: result.totalGeneration,
       totalConsumption: result.totalConsumption,
       maxStorage: result.batteryCapacity,
+      selectedWire: null,
     };
 
     saveToLocalStorage({
@@ -250,26 +288,41 @@ export const useGameStore = create<GameState>((set, get) => ({
   },
 
   tick: () => {
+    tickCounter++;
     const state = get();
     const newGrid = state.grid.map((row) => row.map((c) => ({ ...c })));
 
     for (let y = 0; y < GRID_SIZE; y++) {
       for (let x = 0; x < GRID_SIZE; x++) {
         const cell = newGrid[y][x];
-        if (cell.type !== 'empty' && !cell.faulty && Math.random() < FAULT_CHANCE) {
-          newGrid[y][x].faulty = true;
+        if (cell.type !== 'empty' && !cell.faulty) {
+          let chance = FAULT_CHANCE;
+          if (cell.type === 'wire' && cell.wireData) {
+            chance = getFaultChance(cell.wireData, FAULT_CHANCE);
+          }
+          if (Math.random() < chance) {
+            newGrid[y][x].faulty = true;
+          }
         }
       }
     }
 
     const newDayTime = (state.dayTime + 0.5) % DAY_LENGTH;
 
-    const { poweredCells, totalGeneration, totalConsumption, batteryCapacity } =
+    const { poweredCells, totalGeneration, totalConsumption, batteryCapacity, wireLoads } =
       calculatePowerNetwork(newGrid, newDayTime, state.storedPower);
 
     for (let yy = 0; yy < GRID_SIZE; yy++) {
       for (let xx = 0; xx < GRID_SIZE; xx++) {
         newGrid[yy][xx].powered = poweredCells.has(`${xx},${yy}`);
+        if (newGrid[yy][xx].type === 'wire' && newGrid[yy][xx].wireData) {
+          const load = wireLoads.get(`${xx},${yy}`) ?? 0;
+          newGrid[yy][xx].wireData = evolveWire(
+            newGrid[yy][xx].wireData!,
+            load,
+            tickCounter
+          );
+        }
       }
     }
 
@@ -293,7 +346,7 @@ export const useGameStore = create<GameState>((set, get) => ({
     );
     const totalBuildings = houses + factories;
     const totalPowered = poweredHouses + poweredFactories;
-    let coverage = totalBuildings > 0 ? totalPowered / totalBuildings : 1;
+    const coverage = totalBuildings > 0 ? totalPowered / totalBuildings : 1;
 
     let newSatisfaction = state.satisfaction;
     if (coverage >= 0.8) {
@@ -325,6 +378,7 @@ export const useGameStore = create<GameState>((set, get) => ({
 
   resetGame: () => {
     localStorage.removeItem(STORAGE_KEY);
+    tickCounter = 0;
     const fresh = createEmptyGrid();
     const result = recalcGrid(fresh, 20, 10);
     set({
@@ -338,6 +392,7 @@ export const useGameStore = create<GameState>((set, get) => ({
       totalGeneration: result.totalGeneration,
       totalConsumption: result.totalConsumption,
       showSettlement: false,
+      selectedWire: null,
     });
   },
 

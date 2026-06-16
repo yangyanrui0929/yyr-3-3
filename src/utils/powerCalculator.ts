@@ -5,6 +5,7 @@ import {
   DIR_OFFSETS,
   BUILDING_STATS,
   DAY_THRESHOLD,
+  WIRE_BASE_MAX_CAPACITY,
 } from './constants';
 
 export function isWireConnected(wire: GridCell, direction: number): boolean {
@@ -18,6 +19,98 @@ export function getOppositeDirection(dir: number): number {
   return (dir + 2) % 4;
 }
 
+interface PathNode {
+  x: number;
+  y: number;
+  path: string[];
+}
+
+function traceWirePaths(
+  grid: GridCell[][],
+  sources: Array<{ x: number; y: number }>
+): {
+  wirePaths: Map<string, string[][]>;
+  connectedCells: Set<string>;
+} {
+  const wirePaths = new Map<string, string[][]>();
+  const connectedCells = new Set<string>();
+  const visited = new Set<string>();
+  const queue: PathNode[] = sources.map((s) => ({ x: s.x, y: s.y, path: [`${s.x},${s.y}`] }));
+
+  for (const s of sources) {
+    visited.add(`${s.x},${s.y}`);
+    connectedCells.add(`${s.x},${s.y}`);
+  }
+
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const currentCell = grid[current.y][current.x];
+
+    for (let dir = 0; dir < 4; dir++) {
+      const [dx, dy] = DIR_OFFSETS[dir];
+      const nx = current.x + dx;
+      const ny = current.y + dy;
+
+      if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
+
+      const neighbor = grid[ny][nx];
+      if (neighbor.faulty) continue;
+
+      const neighborKey = `${nx},${ny}`;
+      if (visited.has(neighborKey)) continue;
+
+      let canConnectFromCurrent = false;
+      if (currentCell.type === 'wire') {
+        canConnectFromCurrent = isWireConnected(currentCell, dir);
+      } else if (
+        currentCell.type === 'windmill' ||
+        currentCell.type === 'house' ||
+        currentCell.type === 'factory' ||
+        currentCell.type === 'battery'
+      ) {
+        canConnectFromCurrent = true;
+      }
+
+      let canConnectFromNeighbor = false;
+      if (neighbor.type === 'wire') {
+        canConnectFromNeighbor = isWireConnected(neighbor, getOppositeDirection(dir));
+      } else if (
+        neighbor.type === 'windmill' ||
+        neighbor.type === 'house' ||
+        neighbor.type === 'factory' ||
+        neighbor.type === 'battery'
+      ) {
+        canConnectFromNeighbor = true;
+      }
+
+      if (canConnectFromCurrent && canConnectFromNeighbor) {
+        visited.add(neighborKey);
+        connectedCells.add(neighborKey);
+
+        const newPath = [...current.path, neighborKey];
+        if (neighbor.type === 'wire') {
+          if (!wirePaths.has(neighborKey)) {
+            wirePaths.set(neighborKey, []);
+          }
+          wirePaths.get(neighborKey)!.push(newPath);
+          queue.push({ x: nx, y: ny, path: newPath });
+        } else {
+          for (const node of newPath) {
+            if (grid[Number(node.split(',')[1])][Number(node.split(',')[0])].type === 'wire') {
+              if (!wirePaths.has(node)) {
+                wirePaths.set(node, []);
+              }
+              wirePaths.get(node)!.push(newPath);
+            }
+          }
+        }
+      }
+    }
+  }
+
+  return { wirePaths, connectedCells };
+}
+
 export function calculatePowerNetwork(
   grid: GridCell[][],
   dayTime: number,
@@ -27,6 +120,7 @@ export function calculatePowerNetwork(
   totalGeneration: number;
   totalConsumption: number;
   batteryCapacity: number;
+  wireLoads: Map<string, number>;
 } {
   const isDay = dayTime < DAY_THRESHOLD;
   let totalGeneration = 0;
@@ -85,64 +179,19 @@ export function calculatePowerNetwork(
     ...batterySources.map((s) => ({ x: s.x, y: s.y })),
   ];
 
-  const connectedCells = new Set<string>();
-  const visited = new Set<string>();
-  const queue: Array<{ x: number; y: number }> = [...allSources];
+  const { wirePaths, connectedCells } = traceWirePaths(grid, allSources);
 
-  for (const s of allSources) {
-    visited.add(`${s.x},${s.y}`);
-    connectedCells.add(`${s.x},${s.y}`);
-  }
+  const wireLoads = new Map<string, number>();
+  const wireEfficiencies = new Map<string, number>();
 
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    const currentCell = grid[current.y][current.x];
-
-    for (let dir = 0; dir < 4; dir++) {
-      const [dx, dy] = DIR_OFFSETS[dir];
-      const nx = current.x + dx;
-      const ny = current.y + dy;
-
-      if (nx < 0 || nx >= GRID_SIZE || ny < 0 || ny >= GRID_SIZE) continue;
-
-      const neighbor = grid[ny][nx];
-      if (neighbor.faulty) continue;
-
-      const key = `${nx},${ny}`;
-      if (visited.has(key)) continue;
-
-      let canConnectFromCurrent = false;
-      if (currentCell.type === 'wire') {
-        canConnectFromCurrent = isWireConnected(currentCell, dir);
-      } else if (
-        currentCell.type === 'windmill' ||
-        currentCell.type === 'house' ||
-        currentCell.type === 'factory' ||
-        currentCell.type === 'battery'
-      ) {
-        canConnectFromCurrent = true;
-      }
-
-      let canConnectFromNeighbor = false;
-      if (neighbor.type === 'wire') {
-        canConnectFromNeighbor = isWireConnected(neighbor, getOppositeDirection(dir));
-      } else if (
-        neighbor.type === 'windmill' ||
-        neighbor.type === 'house' ||
-        neighbor.type === 'factory' ||
-        neighbor.type === 'battery'
-      ) {
-        canConnectFromNeighbor = true;
-      }
-
-      if (canConnectFromCurrent && canConnectFromNeighbor) {
-        visited.add(key);
-        connectedCells.add(key);
-        if (neighbor.type === 'wire') {
-          queue.push({ x: nx, y: ny });
-        }
-      }
-    }
+  for (const [wireKey] of wirePaths) {
+    const [wx, wy] = wireKey.split(',').map(Number);
+    const wireCell = grid[wy][wx];
+    const efficiency = wireCell.wireData?.efficiency ?? 1.0;
+    const maxCap = wireCell.wireData?.maxCapacity ?? WIRE_BASE_MAX_CAPACITY;
+    wireEfficiencies.set(wireKey, efficiency);
+    wireLoads.set(wireKey, 0);
+    void maxCap;
   }
 
   const poweredCells = new Set<string>();
@@ -164,7 +213,9 @@ export function calculatePowerNetwork(
     x: number;
     y: number;
     consumption: number;
+    wiresUsed: string[];
   }> = [];
+
   for (let y = 0; y < GRID_SIZE; y++) {
     for (let x = 0; x < GRID_SIZE; x++) {
       const cell = grid[y][x];
@@ -172,6 +223,15 @@ export function calculatePowerNetwork(
         (cell.type === 'house' || cell.type === 'factory') &&
         connectedCells.has(`${x},${y}`)
       ) {
+        const consumerKey = `${x},${y}`;
+        const nearbyWires = new Set<string>();
+        for (const [wireKey, paths] of wirePaths) {
+          for (const path of paths) {
+            if (path.includes(consumerKey)) {
+              nearbyWires.add(wireKey);
+            }
+          }
+        }
         connectedConsumers.push({
           x,
           y,
@@ -179,22 +239,46 @@ export function calculatePowerNetwork(
             cell.type === 'house'
               ? BUILDING_STATS.house.consumption
               : BUILDING_STATS.factory.consumption,
+          wiresUsed: Array.from(nearbyWires),
         });
       }
     }
   }
 
-  let remainingPower = totalAvailable;
   connectedConsumers.sort((a, b) => a.consumption - b.consumption);
 
+  let remainingPower = totalAvailable;
   for (const consumer of connectedConsumers) {
-    if (remainingPower >= consumer.consumption) {
-      remainingPower -= consumer.consumption;
+    let effectiveConsumption = consumer.consumption;
+    for (const wireKey of consumer.wiresUsed) {
+      const eff = wireEfficiencies.get(wireKey) ?? 1.0;
+      if (eff < 1.0) {
+        effectiveConsumption = effectiveConsumption / eff;
+      }
+    }
+    effectiveConsumption = Math.round(effectiveConsumption * 100) / 100;
+
+    if (remainingPower >= effectiveConsumption) {
+      remainingPower -= effectiveConsumption;
       poweredCells.add(`${consumer.x},${consumer.y}`);
+
+      for (const wireKey of consumer.wiresUsed) {
+        const currentLoad = wireLoads.get(wireKey) ?? 0;
+        const wireLoadContribution = consumer.consumption / Math.max(1, consumer.wiresUsed.length);
+        wireLoads.set(wireKey, currentLoad + wireLoadContribution);
+      }
     }
   }
 
-  return { poweredCells, totalGeneration, totalConsumption, batteryCapacity };
+  for (const [wireKey, load] of wireLoads) {
+    const [wx, wy] = wireKey.split(',').map(Number);
+    const wireCell = grid[wy][wx];
+    const maxCap = wireCell.wireData?.maxCapacity ?? WIRE_BASE_MAX_CAPACITY;
+    const genShare = totalGeneration > 0 ? (totalGeneration / Math.max(1, wirePaths.size)) * 0.3 : 0;
+    wireLoads.set(wireKey, Math.min(maxCap, Math.round((load + genShare) * 100) / 100));
+  }
+
+  return { poweredCells, totalGeneration, totalConsumption, batteryCapacity, wireLoads };
 }
 
 export function countPoweredBuildings(
